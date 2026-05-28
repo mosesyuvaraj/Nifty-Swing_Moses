@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Nifty Swing Analyser</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#0a0e1a; --panel:#111827; --panel2:#0f1729; --border:#1f2937;
+    --gold:#f59e0b; --green:#10b981; --red:#ef4444; --blue:#3b82f6;
+    --txt:#e5e7eb; --muted:#9ca3af;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+  body{
+    margin:0;background:var(--bg);color:var(--txt);
+    font-family:'Georgia',serif;
+    background-image:radial-gradient(circle at 20% 0%,rgba(245,158,11,.06),transparent 40%),
+                     radial-gradient(circle at 80% 100%,rgba(59,130,246,.06),transparent 40%);
+    min-height:100vh;padding-bottom:40px;
+  }
+  .wrap{max-width:680px;margin:0 auto;padding:16px;}
+  h1{color:var(--gold);font-size:1.6rem;margin:.2rem 0;letter-spacing:-.5px;}
+  .sub{color:var(--muted);font-size:.82rem;font-family:system-ui,sans-serif;margin-bottom:14px;}
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:14px;
+        padding:16px;margin:12px 0;box-shadow:0 4px 20px rgba(0,0,0,.3);}
+  .reality{background:#2a1a06;border-left:4px solid var(--gold);border-radius:8px;
+           padding:12px 14px;font-family:system-ui,sans-serif;font-size:.8rem;line-height:1.5;}
+  label{font-family:system-ui,sans-serif;font-size:.8rem;color:var(--muted);
+        display:block;margin:10px 0 4px;}
+  select,input{width:100%;padding:11px;background:var(--panel2);color:var(--txt);
+        border:1px solid var(--border);border-radius:9px;font-size:1rem;
+        font-family:system-ui,sans-serif;}
+  button{width:100%;padding:14px;background:linear-gradient(135deg,var(--gold),#d97706);
+         color:#1a1206;border:none;border-radius:11px;font-size:1.05rem;font-weight:700;
+         font-family:system-ui,sans-serif;margin-top:14px;cursor:pointer;}
+  button:active{transform:scale(.98);}
+  button:disabled{opacity:.5;}
+  .row{display:flex;gap:10px;}
+  .row>div{flex:1;}
+  table{width:100%;border-collapse:collapse;font-family:system-ui,sans-serif;font-size:.78rem;}
+  th,td{padding:8px 6px;text-align:right;border-bottom:1px solid var(--border);}
+  th:first-child,td:first-child{text-align:left;}
+  th{color:var(--muted);font-weight:600;font-size:.7rem;text-transform:uppercase;}
+  .best{color:var(--gold);font-weight:700;}
+  .metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+  .metric{background:var(--panel2);border:1px solid var(--border);border-radius:10px;padding:12px;}
+  .metric .v{font-size:1.5rem;font-weight:700;font-family:system-ui,sans-serif;}
+  .metric .l{font-size:.7rem;color:var(--muted);font-family:system-ui,sans-serif;text-transform:uppercase;}
+  .green{color:var(--green);} .red{color:var(--red);} .gold{color:var(--gold);}
+  .sig{background:var(--panel2);border:1px solid var(--border);border-left:3px solid var(--green);
+       border-radius:9px;padding:11px;margin:8px 0;font-family:system-ui,sans-serif;}
+  .sig .nm{font-size:1.05rem;font-weight:700;color:var(--green);}
+  .sig .lv{display:flex;justify-content:space-between;font-size:.8rem;margin-top:6px;color:var(--muted);}
+  .sig .lv b{color:var(--txt);display:block;font-size:.95rem;}
+  .warn{background:#3a1a1a;border-left:4px solid var(--red);border-radius:8px;padding:12px;
+        font-family:system-ui,sans-serif;font-size:.8rem;margin-top:10px;}
+  .prog{height:8px;background:var(--panel2);border-radius:99px;overflow:hidden;margin:14px 0 6px;}
+  .prog>i{display:block;height:100%;background:var(--gold);width:0;transition:width .2s;}
+  .status{font-family:system-ui,sans-serif;font-size:.78rem;color:var(--muted);text-align:center;}
+  h2{font-size:1.1rem;color:var(--gold);font-family:system-ui,sans-serif;margin:.2rem 0 .4rem;}
+  .hint{font-family:system-ui,sans-serif;font-size:.74rem;color:var(--muted);line-height:1.5;}
+  details{font-family:system-ui,sans-serif;font-size:.8rem;margin-top:10px;}
+  summary{color:var(--gold);cursor:pointer;padding:6px 0;}
+  canvas{margin-top:8px;}
+  .pill{display:inline-block;font-family:system-ui,sans-serif;font-size:.68rem;
+        background:var(--panel2);border:1px solid var(--border);border-radius:99px;
+        padding:3px 9px;color:var(--muted);margin:2px;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>📈 Nifty Swing Analyser</h1>
+  <div class="sub">Backtested strategy picker · 2–10 day holds · ATR stops · 2:1 R:R · runs in your browser</div>
+
+  <div class="card reality">
+    <b>⚠️ Reality check on "80% accuracy"</b><br>
+    Real swing strategies run <b>45–60% win rates</b>. Anything above 70% on broad
+    markets is almost always overfit or survivorship bias. This tool ranks by
+    <b>Sharpe ratio</b> (risk-adjusted return), not win rate. A 55% strategy at
+    2:1 reward:risk beats an 80% strategy at 1:3. If a result looks too good,
+    it'll get flagged below.
+  </div>
+
+  <div class="card">
+    <label>Universe (liquid Nifty names — fewer = faster on mobile)</label>
+    <select id="universe">
+      <option value="15">Top 15 (fastest)</option>
+      <option value="25" selected>Top 25 (recommended)</option>
+      <option value="40">Top 40</option>
+      <option value="60">Top 60 (slower)</option>
+    </select>
+    <div class="row">
+      <div>
+        <label>Lookback</label>
+        <select id="years">
+          <option value="2">2 years</option>
+          <option value="3" selected>3 years</option>
+          <option value="5">5 years</option>
+        </select>
+      </div>
+      <div>
+        <label>Risk:Reward</label>
+        <select id="rr">
+          <option value="1.5">1.5 : 1</option>
+          <option value="2" selected>2 : 1 (balanced)</option>
+          <option value="3">3 : 1</option>
+        </select>
+      </div>
+    </div>
+    <button id="run">🚀 Run Backtest</button>
+    <div class="prog" id="progwrap" style="display:none"><i id="prog"></i></div>
+    <div class="status" id="status"></div>
+    <div class="hint" style="margin-top:10px">
+      Data: Yahoo Finance free daily feed. No login, no Upstox (browsers block
+      broker APIs for security). <b>Must be hosted</b> (https link) — opening the
+      raw file won't load data. Daily OHLCV matches what Upstox gives for swing trading.
+    </div>
+  </div>
+
+  <div id="results"></div>
+
+  <div class="card">
+    <details>
+      <summary>📚 Strategies & methodology</summary>
+      <p><b>Four strategies tested (long-only, daily bars):</b></p>
+      <span class="pill">EMA Crossover 10/30 +200 trend</span>
+      <span class="pill">RSI Mean Reversion 14</span>
+      <span class="pill">Donchian Breakout 20/10</span>
+      <span class="pill">MACD Pullback 12/26/9</span>
+      <p style="margin-top:10px"><b>Risk rules:</b> stop = entry − 2×ATR(14);
+      target per your R:R choice; max hold 10 bars; 0.1% cost per side.</p>
+      <p><b>Anti-cheat:</b> signals use only prior-bar data; trades fill at next
+      bar's open; same rules for every stock.</p>
+    </details>
+  </div>
+</div>
+
+<script>
+// ════════════════════════════════════════════════════════════════════════
+// Nifty liquid universe (Stooq uses .IN suffix for NSE; e.g. reliance.in)
+// Ordered roughly by liquidity/index weight.
+// ════════════════════════════════════════════════════════════════════════
+const NIFTY = [
+  "RELIANCE","TCS","HDFCBANK","BHARTIARTL","ICICIBANK","INFY","SBIN","HINDUNILVR",
+  "BAJFINANCE","ITC","LT","HCLTECH","KOTAKBANK","SUNPHARMA","MARUTI","AXISBANK",
+  "NTPC","ULTRACEMCO","TITAN","ONGC","BAJAJFINSV","WIPRO","ADANIPORTS","POWERGRID",
+  "TATAMOTORS","JSWSTEEL","COALINDIA","NESTLEIND","ASIANPAINT","TATASTEEL",
+  "HINDALCO","GRASIM","SBILIFE","HDFCLIFE","BPCL","EICHERMOT","TECHM","BRITANNIA",
+  "CIPLA","DRREDDY","APOLLOHOSP","HEROMOTOCO","INDUSINDBK","TATACONSUM","DLF",
+  "DMART","TRENT","SIEMENS","HAVELLS","DABUR","BANKBARODA","PNB","GAIL","VEDL",
+  "LUPIN","BIOCON","CANBK","MARICO","COLPAL","INDHOTEL"
+];
+
+// ════════════════════════════════════════════════════════════════════════
+// CONFIG
+// ════════════════════════════════════════════════════════════════════════
+const COST = 0.001;        // 0.1% per side
+const MAX_HOLD = 10;       // swing cap
+const ATR_MULT = 2.0;      // stop = entry - 2*ATR
+let RR = 2.0;              // reward:risk (user-set)
+
+// ════════════════════════════════════════════════════════════════════════
+// INDICATORS
+// ════════════════════════════════════════════════════════════════════════
+function ema(arr, p){
+  const k = 2/(p+1); const out = new Array(arr.length).fill(null);
+  let prev; for(let i=0;i<arr.length;i++){
+    if(arr[i]==null){out[i]=null;continue;}
+    prev = (prev==null)? arr[i] : arr[i]*k + prev*(1-k);
+    out[i]=prev;
+  } return out;
+}
+function sma(arr, p){
+  const out = new Array(arr.length).fill(null);
+  for(let i=p-1;i<arr.length;i++){
+    let s=0,ok=true;
+    for(let j=i-p+1;j<=i;j++){ if(arr[j]==null){ok=false;break;} s+=arr[j]; }
+    if(ok) out[i]=s/p;
+  } return out;
+}
+function rsi(arr, p=14){
+  const out=new Array(arr.length).fill(null);
+  let ag=0,al=0;
+  for(let i=1;i<arr.length;i++){
+    const d=arr[i]-arr[i-1]; const g=Math.max(d,0),l=Math.max(-d,0);
+    if(i<=p){ ag+=g/p; al+=l/p; if(i===p){ const rs=al===0?100:ag/al; out[i]=100-100/(1+rs);} }
+    else { ag=(ag*(p-1)+g)/p; al=(al*(p-1)+l)/p; const rs=al===0?100:ag/al; out[i]=100-100/(1+rs); }
+  } return out;
+}
+function atr(H,L,C,p=14){
+  const tr=new Array(C.length).fill(null);
+  for(let i=0;i<C.length;i++){
+    if(i===0){tr[i]=H[i]-L[i];continue;}
+    tr[i]=Math.max(H[i]-L[i], Math.abs(H[i]-C[i-1]), Math.abs(L[i]-C[i-1]));
+  }
+  // Wilder smoothing
+  const out=new Array(C.length).fill(null); let prev;
+  for(let i=0;i<tr.length;i++){
+    prev=(prev==null)?tr[i]:(prev*(p-1)+tr[i])/p; out[i]=prev;
+  } return out;
+}
+function macd(arr,f=12,s=26,sig=9){
+  const ef=ema(arr,f), es=ema(arr,s);
+  const line=arr.map((_,i)=>(ef[i]!=null&&es[i]!=null)?ef[i]-es[i]:null);
+  const sl=ema(line.map(x=>x==null?0:x),sig);
+  const hist=line.map((x,i)=>(x!=null)?x-sl[i]:null);
+  return {line,sl,hist};
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// STRATEGIES → return signal array {1 enter, 0 hold, -1 exit}
+// All use ONLY prior-bar data (shift logic baked in via index compare).
+// ════════════════════════════════════════════════════════════════════════
+function stratEMA(d){
+  const c=d.close; const f=ema(c,10),s=ema(c,30),t=ema(c,200);
+  const sig=new Array(c.length).fill(0);
+  for(let i=1;i<c.length;i++){
+    if(f[i]==null||s[i]==null||t[i]==null) continue;
+    if(f[i]>s[i] && f[i-1]<=s[i-1] && c[i]>t[i]) sig[i]=1;
+    else if(f[i]<s[i] && f[i-1]>=s[i-1]) sig[i]=-1;
+  } return sig;
+}
+function stratRSI(d){
+  const c=d.close; const r=rsi(c,14),t=sma(c,200);
+  const sig=new Array(c.length).fill(0);
+  for(let i=1;i<c.length;i++){
+    if(r[i]==null||t[i]==null) continue;
+    if(r[i]<30 && r[i-1]>=30 && c[i]>t[i]) sig[i]=1;
+    else if(r[i]>60 && r[i-1]<=60) sig[i]=-1;
+  } return sig;
+}
+function stratDonchian(d){
+  const c=d.close,H=d.high,L=d.low; const t=sma(c,100);
+  const sig=new Array(c.length).fill(0);
+  for(let i=20;i<c.length;i++){
+    let hi=-Infinity, lo=Infinity;
+    for(let j=i-20;j<i;j++) hi=Math.max(hi,H[j]);
+    for(let j=i-10;j<i;j++) lo=Math.min(lo,L[j]);
+    if(t[i]==null) continue;
+    if(c[i]>hi && c[i]>t[i]) sig[i]=1;
+    else if(c[i]<lo) sig[i]=-1;
+  } return sig;
+}
+function stratMACD(d){
+  const c=d.close; const {hist}=macd(c); const t=ema(c,50);
+  const sig=new Array(c.length).fill(0);
+  for(let i=1;i<c.length;i++){
+    if(hist[i]==null||t[i]==null) continue;
+    if(hist[i]>0 && hist[i-1]<=0 && c[i]>t[i]) sig[i]=1;
+    else if(hist[i]<0 && hist[i-1]>=0) sig[i]=-1;
+  } return sig;
+}
+const STRATS = {
+  "EMA Crossover (10/30+200)": stratEMA,
+  "RSI Mean Reversion (14)": stratRSI,
+  "Donchian Breakout (20/10)": stratDonchian,
+  "MACD Pullback (12/26/9)": stratMACD,
+};
+
+// ════════════════════════════════════════════════════════════════════════
+// BACKTESTER — next-bar-open fills, intrabar SL/TP, max-hold, costs
+// ════════════════════════════════════════════════════════════════════════
+function simulate(d, sig, sym){
+  const {open:O,high:H,low:L,date:DT}=d;
+  const A=atr(H,L,d.close,14);
+  const trades=[];
+  let inPos=false,entryPx=0,sl=0,tgt=0,held=0,entryDate=null;
+  for(let i=0;i<d.close.length-1;i++){
+    if(inPos){
+      held++;
+      let reason=null,exitPx=null;
+      if(L[i]<=sl){reason="stop";exitPx=sl;}
+      else if(H[i]>=tgt){reason="target";exitPx=tgt;}
+      else if(sig[i]===-1){reason="signal";exitPx=O[i+1];}
+      else if(held>=MAX_HOLD){reason="maxhold";exitPx=O[i+1];}
+      if(reason){
+        const net=(exitPx-entryPx)/entryPx - COST;
+        trades.push({sym,entryDate,exitDate:DT[i],entryPx,exitPx,reason,held,pnl:net});
+        inPos=false; continue;
+      }
+    }
+    if(!inPos && sig[i]===1){
+      const no=O[i+1], av=A[i];
+      if(av==null||av<=0||no==null) continue;
+      entryPx=no*(1+COST); sl=no-ATR_MULT*av; const risk=no-sl; tgt=no+RR*risk;
+      inPos=true; held=0; entryDate=DT[i+1];
+    }
+  }
+  return trades;
+}
+
+function metrics(name, allTrades, dates){
+  const n=allTrades.length;
+  if(n===0) return {name,n:0};
+  const wins=allTrades.filter(t=>t.pnl>0);
+  const losses=allTrades.filter(t=>t.pnl<=0);
+  const gw=wins.reduce((a,t)=>a+t.pnl,0);
+  const gl=-losses.filter(t=>t.pnl<0).reduce((a,t)=>a+t.pnl,0);
+  const pf=gl===0?(gw>0?Infinity:0):gw/gl;
+  const exp=allTrades.reduce((a,t)=>a+t.pnl,0)/n;
+  // equity curve: spread each trade pnl over its holding days / MAX_POSITIONS(10)
+  const idx={}; dates.forEach((dt,i)=>idx[dt]=i);
+  const daily=new Array(dates.length).fill(0);
+  allTrades.forEach(t=>{
+    const a=idx[t.entryDate], b=idx[t.exitDate];
+    if(a==null||b==null||b<a) return;
+    const nd=b-a+1, per=t.pnl/nd/10;
+    for(let k=a;k<=b;k++) daily[k]+=per;
+  });
+  let eq=1; const curve=daily.map(r=>{eq*=(1+r);return eq;});
+  const rets=[]; for(let i=1;i<curve.length;i++) rets.push(curve[i]/curve[i-1]-1);
+  const mean=rets.reduce((a,b)=>a+b,0)/(rets.length||1);
+  const sd=Math.sqrt(rets.reduce((a,b)=>a+(b-mean)**2,0)/(rets.length||1));
+  const sharpe=sd===0?0:mean/sd*Math.sqrt(252);
+  const yrs=curve.length/252;
+  const cagr=curve.length<30?0:(curve[curve.length-1]>0?Math.pow(curve[curve.length-1],1/yrs)-1:-1);
+  let peak=-Infinity,mdd=0;
+  curve.forEach(v=>{peak=Math.max(peak,v);mdd=Math.min(mdd,(v-peak)/peak);});
+  return {name,n,winRate:wins.length/n,
+    avgWin:wins.length?gw/wins.length:0,
+    avgLoss:losses.length?losses.reduce((a,t)=>a+t.pnl,0)/losses.length:0,
+    pf,exp,sharpe,cagr,mdd,curve,dates,trades:allTrades};
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// DATA FETCH — Yahoo Finance chart API (sends CORS headers; works when HOSTED,
+// not from file://). NSE symbols use the .NS suffix.
+// We try query1 then query2 (Yahoo load-balances; one may be up when other isn't).
+// fetchStock returns the data object, or throws with a reason for diagnostics.
+// ════════════════════════════════════════════════════════════════════════
+let LAST_FETCH_ERROR = "";
+
+async function fetchStock(sym, years){
+  const range = years<=2 ? "2y" : (years<=3 ? "5y" : "10y"); // Yahoo accepts fixed ranges
+  const hosts = ["query1.finance.yahoo.com","query2.finance.yahoo.com"];
+  for(const host of hosts){
+    const url=`https://${host}/v8/finance/chart/${sym}.NS?range=${range}&interval=1d`;
+    try{
+      const r=await fetch(url);
+      if(!r.ok){ LAST_FETCH_ERROR=`HTTP ${r.status} from ${host}`; continue; }
+      const j=await r.json();
+      const res=j?.chart?.result?.[0];
+      if(!res||!res.timestamp){ LAST_FETCH_ERROR="empty response"; continue; }
+      const ts=res.timestamp;
+      const q=res.indicators.quote[0];
+      const date=[],open=[],high=[],low=[],close=[],vol=[];
+      for(let i=0;i<ts.length;i++){
+        const o=q.open[i],h=q.high[i],l=q.low[i],c=q.close[i];
+        if(o==null||c==null||!isFinite(c)||c<=0) continue;
+        date.push(new Date(ts[i]*1000).toISOString().slice(0,10));
+        open.push(o);high.push(h);low.push(l);close.push(c);vol.push(q.volume[i]||0);
+      }
+      if(close.length<260){ LAST_FETCH_ERROR=`only ${close.length} bars`; continue; }
+      // trim to requested lookback
+      const keep = years*252 + 220; // extra for 200-day indicators
+      if(close.length>keep){
+        const s=close.length-keep;
+        return {sym,date:date.slice(s),open:open.slice(s),high:high.slice(s),
+                low:low.slice(s),close:close.slice(s),volume:vol.slice(s)};
+      }
+      return {sym,date,open,high,low,close,volume:vol};
+    }catch(e){
+      LAST_FETCH_ERROR = e.message || String(e);
+      // A TypeError "Failed to fetch" here almost always means CORS (file://) —
+      // surfaced to the user in the run handler below.
+    }
+  }
+  return null;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// RUN
+// ════════════════════════════════════════════════════════════════════════
+const $=id=>document.getElementById(id);
+let chartObj=null, allCurvesChart=null;
+
+$("run").addEventListener("click", async ()=>{
+  const N=+$("universe").value, years=+$("years").value;
+  RR=+$("rr").value;
+  const syms=NIFTY.slice(0,N);
+  $("run").disabled=true; $("results").innerHTML="";
+  $("progwrap").style.display="block";
+
+  // 1. fetch data
+  const universe={}; let done=0;
+  for(const s of syms){
+    $("status").textContent=`Loading ${s}… (${done}/${N})`;
+    const d=await fetchStock(s,years);
+    if(d) universe[d.sym]=d;
+    done++; $("prog").style.width=`${done/N*70}%`;
+  }
+  const loaded=Object.keys(universe).length;
+  if(loaded===0){
+    $("status").textContent="";
+    const isFile = location.protocol==="file:";
+    const corsLikely = /Failed to fetch|NetworkError|Load failed/i.test(LAST_FETCH_ERROR);
+    let msg;
+    if(isFile){
+      msg=`<b>You opened this file directly (file://).</b> Browsers block data
+        downloads from local files for security. You need to <b>host it</b> — see
+        the steps I gave you. Once it's on an https:// link, this works.`;
+    } else if(corsLikely){
+      msg=`<b>Data request was blocked (CORS or network).</b> Last error:
+        <code>${LAST_FETCH_ERROR}</code>. If you're hosting on GitHub Pages this
+        should work — try a different network, or wait a minute for rate limits.`;
+    } else {
+      msg=`Couldn't load price data. Last error: <code>${LAST_FETCH_ERROR||"unknown"}</code>.
+        Try a smaller universe, switch wifi/mobile data, or retry in a minute.`;
+    }
+    $("results").innerHTML=`<div class="card warn">${msg}</div>`;
+    $("run").disabled=false; $("progwrap").style.display="none"; return;
+  }
+  if(loaded < syms.length){
+    $("status").textContent=`Loaded ${loaded}/${syms.length} (some symbols skipped)`;
+  }
+
+  // 2. backtest
+  $("status").textContent=`Backtesting ${loaded} stocks…`;
+  const allDatesSet=new Set();
+  Object.values(universe).forEach(d=>d.date.forEach(dt=>allDatesSet.add(dt)));
+  const allDates=[...allDatesSet].sort();
+  const results=[];
+  let si=0;
+  for(const [name,fn] of Object.entries(STRATS)){
+    const trades=[];
+    Object.values(universe).forEach(d=>{
+      const sig=fn(d); simulate(d,sig,d.sym).forEach(t=>trades.push(t));
+    });
+    results.push(metrics(name,trades,allDates));
+    si++; $("prog").style.width=`${70+si/4*30}%`;
+  }
+  $("progwrap").style.display="none"; $("status").textContent="";
+  $("run").disabled=false;
+
+  render(results, universe, loaded);
+});
+
+function fmtPct(x){return (x*100).toFixed(1)+"%";}
+function cls(x){return x>=0?"green":"red";}
+
+function render(results, universe, loaded){
+  const valid=results.filter(r=>r.n>0);
+  if(valid.length===0){
+    $("results").innerHTML=`<div class="card warn">No trades generated.
+      Try a larger universe or longer lookback.</div>`; return;
+  }
+  valid.sort((a,b)=>b.sharpe-a.sharpe);
+  const best=valid[0];
+
+  // comparison table
+  let html=`<div class="card"><h2>📊 Strategy Comparison</h2>
+    <div class="hint">Loaded ${loaded} stocks. Ranked by Sharpe (risk-adjusted return).</div>
+    <table><tr><th>Strategy</th><th>Trades</th><th>Win%</th><th>PF</th><th>Sharpe</th><th>MaxDD</th></tr>`;
+  valid.forEach(r=>{
+    const b=r===best?'class="best"':'';
+    html+=`<tr ${b}><td>${r.name}</td><td>${r.n}</td><td>${fmtPct(r.winRate)}</td>
+      <td>${r.pf===Infinity?"∞":r.pf.toFixed(2)}</td><td>${r.sharpe.toFixed(2)}</td>
+      <td>${fmtPct(r.mdd)}</td></tr>`;
+  });
+  html+=`</table></div>`;
+
+  // best strategy metrics
+  html+=`<div class="card"><h2>🏆 Best: ${best.name}</h2>
+    <div class="hint">Chosen by Sharpe · ${best.n} trades</div>
+    <div class="metric-grid" style="margin-top:10px">
+      <div class="metric"><div class="v">${fmtPct(best.winRate)}</div><div class="l">Win Rate</div></div>
+      <div class="metric"><div class="v">${best.pf===Infinity?"∞":best.pf.toFixed(2)}</div><div class="l">Profit Factor</div></div>
+      <div class="metric"><div class="v ${cls(best.cagr)}">${fmtPct(best.cagr)}</div><div class="l">CAGR</div></div>
+      <div class="metric"><div class="v red">${fmtPct(best.mdd)}</div><div class="l">Max Drawdown</div></div>
+    </div>`;
+  if(best.winRate>0.75){
+    html+=`<div class="warn">⚠️ Win rate ${fmtPct(best.winRate)} is suspiciously high —
+      likely small sample or favorable period. Out-of-sample results unlikely to match.</div>`;
+  }
+  html+=`</div>`;
+
+  // equity curve
+  html+=`<div class="card"><h2>📈 Equity Curve</h2><canvas id="eqchart" height="200"></canvas></div>`;
+
+  // live signals
+  const fn=STRATS[best.name];
+  const sigs=[];
+  Object.values(universe).forEach(d=>{
+    const sig=fn(d); const i=sig.length-1;
+    if(sig[i]===1){
+      const A=atr(d.high,d.low,d.close,14); const av=A[i], px=d.close[i];
+      if(av&&av>0){
+        const sl=px-ATR_MULT*av, risk=px-sl, tgt=px+RR*risk;
+        sigs.push({sym:d.sym,date:d.date[i],px,sl,tgt,
+          riskPct:risk/px*100,rewPct:(tgt-px)/px*100});
+      }
+    }
+  });
+  html+=`<div class="card"><h2>🎯 Today's Buy Signals</h2>
+    <div class="hint">Where ${best.name} fires a buy on the latest bar.</div>`;
+  if(sigs.length===0){
+    html+=`<div class="hint" style="margin-top:10px">No signals on the latest bar.
+      Swing setups don't trigger daily — check again tomorrow.</div>`;
+  } else {
+    sigs.forEach(s=>{
+      html+=`<div class="sig"><div class="nm">${s.sym}</div>
+        <div class="hint">Signal date: ${s.date}</div>
+        <div class="lv"><span>Entry<b>₹${s.px.toFixed(2)}</b></span>
+          <span>Stop<b class="red">₹${s.sl.toFixed(2)}</b></span>
+          <span>Target<b class="green">₹${s.tgt.toFixed(2)}</b></span></div>
+        <div class="lv"><span>Risk<b>${s.riskPct.toFixed(1)}%</b></span>
+          <span>Reward<b>${s.rewPct.toFixed(1)}%</b></span>
+          <span>R:R<b>1:${RR}</b></span></div></div>`;
+    });
+  }
+  html+=`</div>`;
+
+  // trade log (last 30)
+  html+=`<div class="card"><details><summary>📋 Recent trades (last 30 of ${best.n})</summary>
+    <table><tr><th>Stock</th><th>Entry</th><th>Exit</th><th>P&L%</th><th>Why</th></tr>`;
+  best.trades.slice(-30).reverse().forEach(t=>{
+    html+=`<tr><td>${t.sym}</td><td>${t.entryDate}</td><td>${t.exitDate}</td>
+      <td class="${cls(t.pnl)}">${(t.pnl*100).toFixed(1)}</td><td>${t.reason}</td></tr>`;
+  });
+  html+=`</table></details></div>`;
+
+  $("results").innerHTML=html;
+
+  // draw equity chart
+  const step=Math.max(1,Math.floor(best.curve.length/120));
+  const labels=[],data=[];
+  for(let i=0;i<best.curve.length;i+=step){labels.push(best.dates[i]);data.push(best.curve[i]);}
+  if(chartObj) chartObj.destroy();
+  chartObj=new Chart($("eqchart"),{
+    type:"line",
+    data:{labels,datasets:[{data,borderColor:"#f59e0b",backgroundColor:"rgba(245,158,11,.1)",
+      fill:true,pointRadius:0,borderWidth:2,tension:.1}]},
+    options:{responsive:true,plugins:{legend:{display:false}},
+      scales:{x:{ticks:{color:"#9ca3af",maxTicksLimit:5,font:{size:9}},grid:{display:false}},
+        y:{ticks:{color:"#9ca3af",font:{size:9}},grid:{color:"#1f2937"}}}}
+  });
+
+  $("results").scrollIntoView({behavior:"smooth"});
+}
+</script>
+</body>
+</html>
