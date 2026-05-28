@@ -108,6 +108,18 @@
         </select>
       </div>
     </div>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:12px">
+      <input type="checkbox" id="regime" checked style="width:auto">
+      <span style="font-family:system-ui,sans-serif;font-size:.85rem;color:var(--txt)">
+        Regime filter — only buy when Nifty is above its 200-day average
+      </span>
+    </label>
+    <label style="display:flex;align-items:center;gap:8px;margin-top:6px">
+      <input type="checkbox" id="walkfwd" checked style="width:auto">
+      <span style="font-family:system-ui,sans-serif;font-size:.85rem;color:var(--txt)">
+        Walk-forward test — train on first half, test on unseen second half
+      </span>
+    </label>
     <button id="run">🚀 Run Backtest</button>
     <div class="prog" id="progwrap" style="display:none"><i id="prog"></i></div>
     <div class="status" id="status"></div>
@@ -272,9 +284,15 @@ const STRATS = {
 // ════════════════════════════════════════════════════════════════════════
 // BACKTESTER — next-bar-open fills, intrabar SL/TP, max-hold, costs
 // ════════════════════════════════════════════════════════════════════════
-function simulate(d, sig, sym){
+// simulate(d, sig, sym, opts)
+//   opts.riskOn  : optional Set of dates (YYYY-MM-DD) when market regime is bullish.
+//                  If provided, entries only fire on those dates.
+//   opts.from/to : optional date-string bounds (inclusive) to restrict the window
+//                  for walk-forward in/out-of-sample splits.
+function simulate(d, sig, sym, opts={}){
   const {open:O,high:H,low:L,date:DT}=d;
   const A=atr(H,L,d.close,14);
+  const riskOn=opts.riskOn||null, from=opts.from||null, to=opts.to||null;
   const trades=[];
   let inPos=false,entryPx=0,sl=0,tgt=0,held=0,entryDate=null;
   for(let i=0;i<d.close.length-1;i++){
@@ -292,10 +310,16 @@ function simulate(d, sig, sym){
       }
     }
     if(!inPos && sig[i]===1){
+      // walk-forward window: entry date must fall inside [from,to]
+      const ed=DT[i+1];
+      if(from && ed<from) continue;
+      if(to && ed>to) continue;
+      // regime filter: only enter when market is risk-on at signal bar
+      if(riskOn && !riskOn.has(DT[i])) continue;
       const no=O[i+1], av=A[i];
       if(av==null||av<=0||no==null) continue;
       entryPx=no*(1+COST); sl=no-ATR_MULT*av; const risk=no-sl; tgt=no+RR*risk;
-      inPos=true; held=0; entryDate=DT[i+1];
+      inPos=true; held=0; entryDate=ed;
     }
   }
   return trades;
@@ -332,6 +356,52 @@ function metrics(name, allTrades, dates){
     avgWin:wins.length?gw/wins.length:0,
     avgLoss:losses.length?losses.reduce((a,t)=>a+t.pnl,0)/losses.length:0,
     pf,exp,sharpe,cagr,mdd,curve,dates,trades:allTrades};
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// REGIME FILTER — build a Set of dates when the index closed above its 200-SMA.
+// Entries are only allowed on risk-on dates. index = {date[],close[]}.
+// ════════════════════════════════════════════════════════════════════════
+function buildRiskOn(index){
+  const t=sma(index.close,200);
+  const s=new Set();
+  for(let i=0;i<index.close.length;i++){
+    if(t[i]!=null && index.close[i]>t[i]) s.add(index.date[i]);
+  }
+  return s;
+}
+
+// Run all strategies over the universe with optional regime + window, return
+// metrics keyed by strategy name.
+function runAll(universe, allDates, opts={}){
+  const out={};
+  for(const [name,fn] of Object.entries(STRATS)){
+    const trades=[];
+    Object.values(universe).forEach(d=>{
+      simulate(d, fn(d), d.sym, opts).forEach(t=>trades.push(t));
+    });
+    out[name]=metrics(name,trades,allDates);
+  }
+  return out;
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// WALK-FORWARD — split timeline at the midpoint. Pick the best strategy by
+// Sharpe on the IN-SAMPLE (training) half, then measure that same strategy on
+// the OUT-OF-SAMPLE (test) half it never influenced. Honest overfit check.
+// ════════════════════════════════════════════════════════════════════════
+function walkForward(universe, allDates, riskOn){
+  if(allDates.length<400) return null; // need enough history to split
+  const mid=allDates[Math.floor(allDates.length/2)];
+  const opts=riskOn?{riskOn}:{};
+  const inSample=runAll(universe, allDates, {...opts, to:mid});
+  const outSample=runAll(universe, allDates, {...opts, from:mid});
+  // best by in-sample Sharpe (only the training half is allowed to choose)
+  const best=Object.values(inSample).filter(r=>r.n>0)
+    .sort((a,b)=>b.sharpe-a.sharpe)[0];
+  if(!best) return null;
+  return {splitDate:mid, bestName:best.name,
+          inSample:best, outSample:outSample[best.name]};
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -426,29 +496,70 @@ $("run").addEventListener("click", async ()=>{
     $("status").textContent=`Loaded ${loaded}/${syms.length} (some symbols skipped)`;
   }
 
-  runBacktestAndRender(universe);
+  // 2. fetch Nifty index for regime filter (only if enabled)
+  let riskOn=null;
+  if($("regime").checked){
+    $("status").textContent="Loading Nifty index for regime filter…";
+    const idx=await fetchIndex(years);
+    if(idx) riskOn=buildRiskOn(idx);
+    // if index fetch fails, we silently proceed without the filter
+  }
+
+  runBacktestAndRender(universe, {riskOn, walkfwd:$("walkfwd").checked});
 });
 
+// Fetch an index (e.g. ^NSEI). No .NS suffix; symbol is URL-encoded.
+async function fetchIndex(years){
+  const range = years<=2 ? "2y" : (years<=3 ? "5y" : "10y");
+  const target = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent("^NSEI")}?range=${range}&interval=1d`;
+  for(const proxy of PROXIES){
+    try{
+      const r=await fetch(proxy(target));
+      if(!r.ok) continue;
+      const j=await r.json();
+      const res=j?.chart?.result?.[0];
+      if(!res||!res.timestamp) continue;
+      const ts=res.timestamp, q=res.indicators.quote[0];
+      const date=[],close=[];
+      for(let i=0;i<ts.length;i++){
+        if(q.close[i]==null) continue;
+        date.push(new Date(ts[i]*1000).toISOString().slice(0,10));
+        close.push(q.close[i]);
+      }
+      if(close.length>200) return {date,close};
+    }catch(e){}
+  }
+  return null;
+}
+
 // Shared: backtest a loaded universe and render results
-function runBacktestAndRender(universe){
+function runBacktestAndRender(universe, opts={}){
+  const {riskOn=null, walkfwd=false}=opts;
   const loaded=Object.keys(universe).length;
   $("status").textContent=`Backtesting ${loaded} stocks…`;
   const allDatesSet=new Set();
   Object.values(universe).forEach(d=>d.date.forEach(dt=>allDatesSet.add(dt)));
   const allDates=[...allDatesSet].sort();
+  const simOpts = riskOn?{riskOn}:{};
   const results=[];
   let si=0;
   for(const [name,fn] of Object.entries(STRATS)){
     const trades=[];
     Object.values(universe).forEach(d=>{
-      const sig=fn(d); simulate(d,sig,d.sym).forEach(t=>trades.push(t));
+      const sig=fn(d); simulate(d,sig,d.sym,simOpts).forEach(t=>trades.push(t));
     });
     results.push(metrics(name,trades,allDates));
     si++; $("prog").style.width=`${70+si/4*30}%`;
   }
+  // walk-forward (uses same regime setting)
+  let wf=null;
+  if(walkfwd){
+    $("status").textContent="Running walk-forward test…";
+    wf=walkForward(universe, allDates, riskOn);
+  }
   $("progwrap").style.display="none"; $("status").textContent="";
   $("run").disabled=false;
-  render(results, universe, loaded);
+  render(results, universe, loaded, {riskOn:!!riskOn, wf});
 }
 
 // CSV paste handler — guaranteed offline path
@@ -490,18 +601,20 @@ $("runcsv").addEventListener("click", ()=>{
 function fmtPct(x){return (x*100).toFixed(1)+"%";}
 function cls(x){return x>=0?"green":"red";}
 
-function render(results, universe, loaded){
+function render(results, universe, loaded, opts={}){
+  const {riskOn=false, wf=null}=opts;
   const valid=results.filter(r=>r.n>0);
   if(valid.length===0){
     $("results").innerHTML=`<div class="card warn">No trades generated.
-      Try a larger universe or longer lookback.</div>`; return;
+      ${riskOn?"The regime filter may have blocked all entries (market mostly below its 200-day average in this window). Try unticking it, or ":"Try "}a larger universe or longer lookback.</div>`; return;
   }
   valid.sort((a,b)=>b.sharpe-a.sharpe);
   const best=valid[0];
 
   // comparison table
   let html=`<div class="card"><h2>📊 Strategy Comparison</h2>
-    <div class="hint">Loaded ${loaded} stocks. Ranked by Sharpe (risk-adjusted return).</div>
+    <div class="hint">Loaded ${loaded} stocks. Ranked by Sharpe (risk-adjusted return).
+    ${riskOn?'<span class="pill">✓ Regime filter ON</span>':'<span class="pill">Regime filter off</span>'}</div>
     <table><tr><th>Strategy</th><th>Trades</th><th>Win%</th><th>PF</th><th>Sharpe</th><th>MaxDD</th></tr>`;
   valid.forEach(r=>{
     const b=r===best?'class="best"':'';
@@ -511,9 +624,34 @@ function render(results, universe, loaded){
   });
   html+=`</table></div>`;
 
+  // walk-forward panel — the honest overfit check
+  if(wf && wf.outSample){
+    const is=wf.inSample, os=wf.outSample;
+    // judge robustness: did out-of-sample keep a positive, comparable edge?
+    const held = os.n>=10 && os.sharpe>0.3 && os.pf>1.1;
+    const decent = os.n>=10 && os.sharpe>0 && os.pf>1.0;
+    const verdict = held
+      ? `<span class="green">✓ Edge held up out-of-sample.</span> The strategy stayed profitable on data it never saw — that's the good sign you want.`
+      : decent
+      ? `<span class="gold">~ Marginal.</span> Out-of-sample stayed barely positive but weaker than training. Treat returns with caution.`
+      : `<span class="red">✗ Edge collapsed out-of-sample.</span> Strong on training, weak on unseen data — classic overfitting. Don't trust the headline numbers.`;
+    html+=`<div class="card"><h2>🔬 Walk-Forward Test</h2>
+      <div class="hint">Best strategy on the <b>training</b> half (${wf.bestName}) was
+      re-tested on the <b>unseen</b> half after ${wf.splitDate}. This is the real
+      test of whether an edge exists.</div>
+      <table style="margin-top:8px">
+        <tr><th>Period</th><th>Trades</th><th>Win%</th><th>PF</th><th>Sharpe</th><th>CAGR</th></tr>
+        <tr><td>In-sample (train)</td><td>${is.n}</td><td>${fmtPct(is.winRate)}</td>
+          <td>${is.pf===Infinity?"∞":is.pf.toFixed(2)}</td><td>${is.sharpe.toFixed(2)}</td><td>${fmtPct(is.cagr)}</td></tr>
+        <tr><td>Out-of-sample (test)</td><td>${os.n}</td><td>${fmtPct(os.winRate)}</td>
+          <td>${os.pf===Infinity?"∞":os.pf.toFixed(2)}</td><td>${os.sharpe.toFixed(2)}</td><td>${fmtPct(os.cagr)}</td></tr>
+      </table>
+      <div class="hint" style="margin-top:10px;line-height:1.5">${verdict}</div></div>`;
+  }
+
   // best strategy metrics
   html+=`<div class="card"><h2>🏆 Best: ${best.name}</h2>
-    <div class="hint">Chosen by Sharpe · ${best.n} trades</div>
+    <div class="hint">Chosen by Sharpe · ${best.n} trades${riskOn?" · regime-filtered":""}</div>
     <div class="metric-grid" style="margin-top:10px">
       <div class="metric"><div class="v">${fmtPct(best.winRate)}</div><div class="l">Win Rate</div></div>
       <div class="metric"><div class="v">${best.pf===Infinity?"∞":best.pf.toFixed(2)}</div><div class="l">Profit Factor</div></div>
