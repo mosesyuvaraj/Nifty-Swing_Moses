@@ -112,10 +112,21 @@
     <div class="prog" id="progwrap" style="display:none"><i id="prog"></i></div>
     <div class="status" id="status"></div>
     <div class="hint" style="margin-top:10px">
-      Data: Yahoo Finance free daily feed. No login, no Upstox (browsers block
-      broker APIs for security). <b>Must be hosted</b> (https link) — opening the
-      raw file won't load data. Daily OHLCV matches what Upstox gives for swing trading.
+      Data: Yahoo Finance via free CORS proxy (broker APIs can't be called from a
+      browser). <b>Must be hosted</b> on an https link. Daily OHLCV matches what
+      Upstox gives for swing trading.
     </div>
+    <details style="margin-top:12px">
+      <summary>📋 Offline mode — paste your own CSV (guaranteed to work)</summary>
+      <div class="hint" style="margin:8px 0">
+        If proxies are down, export daily data from any source and paste it here.
+        Format per line: <code>SYMBOL,YYYY-MM-DD,open,high,low,close,volume</code>.
+        One symbol or many; needs ≥260 rows per symbol. Then tap <b>Run on pasted data</b>.
+      </div>
+      <textarea id="csv" rows="5" placeholder="RELIANCE,2024-01-01,2700,2720,2690,2710,1000000&#10;RELIANCE,2024-01-02,..."
+        style="width:100%;background:var(--panel2);color:var(--txt);border:1px solid var(--border);border-radius:9px;padding:10px;font-family:monospace;font-size:.75rem"></textarea>
+      <button id="runcsv" style="background:linear-gradient(135deg,#3b82f6,#2563eb);color:#fff;margin-top:8px">Run on pasted data</button>
+    </details>
   </div>
 
   <div id="results"></div>
@@ -324,26 +335,33 @@ function metrics(name, allTrades, dates){
 }
 
 // ════════════════════════════════════════════════════════════════════════
-// DATA FETCH — Yahoo Finance chart API (sends CORS headers; works when HOSTED,
-// not from file://). NSE symbols use the .NS suffix.
-// We try query1 then query2 (Yahoo load-balances; one may be up when other isn't).
-// fetchStock returns the data object, or throws with a reason for diagnostics.
+// DATA FETCH — Yahoo Finance chart API routed through CORS proxies.
+// Yahoo blocks direct browser requests (no Access-Control-Allow-Origin), so we
+// relay through free public CORS proxies and try each until one succeeds.
+// NSE symbols use the .NS suffix.
 // ════════════════════════════════════════════════════════════════════════
 let LAST_FETCH_ERROR = "";
 
+// Proxy builders: each takes a target URL and returns the proxied URL.
+// Tried in order; first success wins. If all fail, user can use CSV paste.
+const PROXIES = [
+  u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
+  u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+  u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+];
+
 async function fetchStock(sym, years){
-  const range = years<=2 ? "2y" : (years<=3 ? "5y" : "10y"); // Yahoo accepts fixed ranges
-  const hosts = ["query1.finance.yahoo.com","query2.finance.yahoo.com"];
-  for(const host of hosts){
-    const url=`https://${host}/v8/finance/chart/${sym}.NS?range=${range}&interval=1d`;
+  const range = years<=2 ? "2y" : (years<=3 ? "5y" : "10y");
+  const target = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}.NS?range=${range}&interval=1d`;
+
+  for(const proxy of PROXIES){
     try{
-      const r=await fetch(url);
-      if(!r.ok){ LAST_FETCH_ERROR=`HTTP ${r.status} from ${host}`; continue; }
-      const j=await r.json();
-      const res=j?.chart?.result?.[0];
-      if(!res||!res.timestamp){ LAST_FETCH_ERROR="empty response"; continue; }
-      const ts=res.timestamp;
-      const q=res.indicators.quote[0];
+      const r = await fetch(proxy(target));
+      if(!r.ok){ LAST_FETCH_ERROR=`HTTP ${r.status}`; continue; }
+      const j = await r.json();
+      const res = j?.chart?.result?.[0];
+      if(!res || !res.timestamp){ LAST_FETCH_ERROR="empty/blocked response"; continue; }
+      const ts=res.timestamp, q=res.indicators.quote[0];
       const date=[],open=[],high=[],low=[],close=[],vol=[];
       for(let i=0;i<ts.length;i++){
         const o=q.open[i],h=q.high[i],l=q.low[i],c=q.close[i];
@@ -352,8 +370,7 @@ async function fetchStock(sym, years){
         open.push(o);high.push(h);low.push(l);close.push(c);vol.push(q.volume[i]||0);
       }
       if(close.length<260){ LAST_FETCH_ERROR=`only ${close.length} bars`; continue; }
-      // trim to requested lookback
-      const keep = years*252 + 220; // extra for 200-day indicators
+      const keep=years*252+220;
       if(close.length>keep){
         const s=close.length-keep;
         return {sym,date:date.slice(s),open:open.slice(s),high:high.slice(s),
@@ -362,8 +379,6 @@ async function fetchStock(sym, years){
       return {sym,date,open,high,low,close,volume:vol};
     }catch(e){
       LAST_FETCH_ERROR = e.message || String(e);
-      // A TypeError "Failed to fetch" here almost always means CORS (file://) —
-      // surfaced to the user in the run handler below.
     }
   }
   return null;
@@ -394,19 +409,15 @@ $("run").addEventListener("click", async ()=>{
   if(loaded===0){
     $("status").textContent="";
     const isFile = location.protocol==="file:";
-    const corsLikely = /Failed to fetch|NetworkError|Load failed/i.test(LAST_FETCH_ERROR);
     let msg;
     if(isFile){
-      msg=`<b>You opened this file directly (file://).</b> Browsers block data
-        downloads from local files for security. You need to <b>host it</b> — see
-        the steps I gave you. Once it's on an https:// link, this works.`;
-    } else if(corsLikely){
-      msg=`<b>Data request was blocked (CORS or network).</b> Last error:
-        <code>${LAST_FETCH_ERROR}</code>. If you're hosting on GitHub Pages this
-        should work — try a different network, or wait a minute for rate limits.`;
+      msg=`<b>You opened this file directly (file://).</b> Host it on GitHub Pages
+        first — data can't load from a local file.`;
     } else {
-      msg=`Couldn't load price data. Last error: <code>${LAST_FETCH_ERROR||"unknown"}</code>.
-        Try a smaller universe, switch wifi/mobile data, or retry in a minute.`;
+      msg=`<b>All data proxies failed.</b> Last error: <code>${LAST_FETCH_ERROR||"unknown"}</code>.
+        Free CORS proxies get rate-limited — <b>wait 60 seconds and tap Run again</b>,
+        or pick <b>Top 15</b> to make fewer requests. If it keeps failing, the proxies
+        may be down; use the <b>Paste CSV</b> option below as a guaranteed fallback.`;
     }
     $("results").innerHTML=`<div class="card warn">${msg}</div>`;
     $("run").disabled=false; $("progwrap").style.display="none"; return;
@@ -415,7 +426,12 @@ $("run").addEventListener("click", async ()=>{
     $("status").textContent=`Loaded ${loaded}/${syms.length} (some symbols skipped)`;
   }
 
-  // 2. backtest
+  runBacktestAndRender(universe);
+});
+
+// Shared: backtest a loaded universe and render results
+function runBacktestAndRender(universe){
+  const loaded=Object.keys(universe).length;
   $("status").textContent=`Backtesting ${loaded} stocks…`;
   const allDatesSet=new Set();
   Object.values(universe).forEach(d=>d.date.forEach(dt=>allDatesSet.add(dt)));
@@ -432,8 +448,43 @@ $("run").addEventListener("click", async ()=>{
   }
   $("progwrap").style.display="none"; $("status").textContent="";
   $("run").disabled=false;
-
   render(results, universe, loaded);
+}
+
+// CSV paste handler — guaranteed offline path
+$("runcsv").addEventListener("click", ()=>{
+  RR=+$("rr").value;
+  const raw=$("csv").value.trim();
+  if(!raw){ alert("Paste some CSV data first."); return; }
+  const bySym={};
+  let bad=0;
+  raw.split(/\r?\n/).forEach(line=>{
+    const p=line.split(",").map(x=>x.trim());
+    if(p.length<7){ bad++; return; }
+    const [sym,date,o,h,l,c,v]=p;
+    if(!isFinite(+c)||+c<=0){ bad++; return; }
+    if(!bySym[sym]) bySym[sym]={sym,date:[],open:[],high:[],low:[],close:[],volume:[]};
+    const d=bySym[sym];
+    d.date.push(date);d.open.push(+o);d.high.push(+h);d.low.push(+l);d.close.push(+c);d.volume.push(+v||0);
+  });
+  // keep only symbols with enough rows; sort each by date
+  const universe={};
+  Object.values(bySym).forEach(d=>{
+    if(d.close.length<260) return;
+    const order=d.date.map((dt,i)=>i).sort((a,b)=>d.date[a]<d.date[b]?-1:1);
+    const reorder=arr=>order.map(i=>arr[i]);
+    universe[d.sym]={sym:d.sym,date:reorder(d.date),open:reorder(d.open),
+      high:reorder(d.high),low:reorder(d.low),close:reorder(d.close),volume:reorder(d.volume)};
+  });
+  if(Object.keys(universe).length===0){
+    $("results").innerHTML=`<div class="card warn">No usable symbols. Each needs
+      ≥260 rows in format <code>SYMBOL,YYYY-MM-DD,open,high,low,close,volume</code>.
+      ${bad} lines couldn't be parsed.</div>`;
+    return;
+  }
+  $("run").disabled=true; $("results").innerHTML="";
+  $("progwrap").style.display="block"; $("prog").style.width="70%";
+  runBacktestAndRender(universe);
 });
 
 function fmtPct(x){return (x*100).toFixed(1)+"%";}
